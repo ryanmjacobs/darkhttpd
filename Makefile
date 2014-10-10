@@ -8,7 +8,12 @@ all: darkhttpd
 darkhttpd: darkhttpd.c
 	$(CC) $(CFLAGS) $(LIBS) darkhttpd.c -o $(EXECUTABLE)
 
-install:
+debian: darkhttpd
+	cd ..; dpkg-deb --build darkhttpd
+	mv ../darkhttpd.deb .
+	chmod +x darkhttpd.deb
+
+install: darkhttpd
 	install -Dm 775 $(EXECUTABLE) /usr/bin/$(EXECUTABLE)
 
 uninstall:

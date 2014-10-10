@@ -1,0 +1,9 @@
+Package: darkhttpd
+Version: 1.10
+Section: custom
+Priority: optional
+Architecture: all
+Essential: no
+Installed-Size: 1024
+Maintainer: linuxconfig.org
+Description: When you need a web server in a hurry.

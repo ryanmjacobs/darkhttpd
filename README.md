@@ -4,6 +4,7 @@ Ryan's fork of darkhttpd
 
 1. Add `make install` and `make uninstall`.
 2. Markdown-ify this readme file.
+3. Add `make debian`.
 
 ---
 
