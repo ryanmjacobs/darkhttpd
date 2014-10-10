@@ -1,10 +1,10 @@
 Ryan's fork of darkhttpd
 ========================
-#####So far, the only changes I have made are:
+#####So far, the changes I have made are:
 
-1. Add `make install` and `make uninstall`.
-2. Markdown-ify this readme file.
-3. Add `make debian`.
+1. Markdown-ify this readme file.
+2. Add `make install`, `make uninstall`, and `make debian`.
+3. Remove dev scripts.
 
 ---
 
