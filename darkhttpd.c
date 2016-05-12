@@ -1,6 +1,6 @@
 /* darkhttpd - a simple, single-threaded, static content webserver.
  * https://unix4lyfe.org/darkhttpd/
- * Copyright (c) 2003-2014 Emil Mikulic <emikulic@gmail.com>
+ * Copyright (c) 2003-2016 Emil Mikulic <emikulic@gmail.com>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the
@@ -18,8 +18,14 @@
  */
 
 static const char
-    pkgname[]   = "darkhttpd/1.10.from.git",
-    copyright[] = "copyright (c) 2003-2014 Emil Mikulic";
+    pkgname[]   = "darkhttpd/1.12.from.git",
+    copyright[] = "copyright (c) 2003-2016 Emil Mikulic";
+
+/* Possible build options: -DDEBUG -DNO_IPV6 */
+
+#ifndef NO_IPV6
+# define HAVE_INET6
+#endif
 
 #ifndef DEBUG
 # define NDEBUG
@@ -53,6 +59,7 @@ static const int debug = 1;
 #include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
+#include <limits.h>
 #include <pwd.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -203,7 +210,11 @@ struct connection {
     LIST_ENTRY(connection) entries;
 
     int socket;
+#ifdef HAVE_INET6
+    struct in6_addr client;
+#else
     in_addr_t client;
+#endif
     time_t last_active;
     enum {
         RECV_REQUEST,   /* receiving request */
@@ -267,12 +278,16 @@ static time_t now;
 #define MAX_REQUEST_LENGTH 4000
 
 /* Defaults can be overridden on the command-line */
-static in_addr_t bindaddr = INADDR_ANY;
+static const char *bindaddr;
 static uint16_t bindport = 8080; /* or 80 if running as root */
 static int max_connections = -1;        /* kern.ipc.somaxconn */
 static const char *index_name = "index.html";
+static int no_listing = 0;
 
 static int sockin = -1;             /* socket to accept connections from */
+#ifdef HAVE_INET6
+static int inet6 = 0;               /* whether the socket uses inet6 */
+#endif
 static char *wwwroot = NULL;        /* a path name */
 static char *logfile_name = NULL;   /* NULL = no logging */
 static FILE *logfile = NULL;
@@ -312,7 +327,8 @@ static const char *default_extension_map[] = {
     NULL
 };
 
-static const char default_mimetype[] = "application/octet-stream";
+static const char octet_stream[] = "application/octet-stream";
+static const char *default_mimetype = octet_stream;
 
 /* Prototypes. */
 static void poll_recv_request(struct connection *conn);
@@ -387,7 +403,9 @@ static unsigned int xasprintf(char **ret, const char *format, ...) {
 /* Append buffer code.  A somewhat efficient string buffer with pool-based
  * reallocation.
  */
-#define APBUF_INIT 4096
+#ifndef APBUF_INIT
+# define APBUF_INIT 4096
+#endif
 #define APBUF_GROW APBUF_INIT
 struct apbuf {
     size_t length, pool;
@@ -525,6 +543,7 @@ static char *make_safe_url(char *url) {
             num_slashes++;
 
     /* make an array for the URL elements */
+    assert(num_slashes > 0);
     chunks = xmalloc(sizeof(*chunks) * num_slashes);
 
     /* split by slashes and build chunks array */
@@ -744,15 +763,6 @@ static char *read_line(FILE *fp) {
     return buf;
 }
 
-/* Removes the ending newline in a string, if there is one. */
-static void chomp(char *str) {
-    size_t len = strlen(str);
-    if (len == 0)
-        return;
-    if (str[len - 1] == '\n')
-        str[len - 1] = '\0';
-}
-
 /* ---------------------------------------------------------------------------
  * Adds contents of specified file to mime_map list.
  */
@@ -763,7 +773,6 @@ static void parse_extension_map_file(const char *filename) {
     if (fp == NULL)
         err(1, "fopen(\"%s\")", filename);
     while ((buf = read_line(fp)) != NULL) {
-        chomp(buf);
         parse_mimetype_line(buf);
         free(buf);
     }
@@ -800,16 +809,49 @@ static const char *url_content_type(const char *url) {
     return default_mimetype;
 }
 
+static const char *get_address_text(const void *addr) {
+#ifdef HAVE_INET6
+    if (inet6) {
+        static char text_addr[INET6_ADDRSTRLEN];
+        inet_ntop(AF_INET6, (const struct in6_addr *)addr, text_addr,
+                  INET6_ADDRSTRLEN);
+        return text_addr;
+    } else
+#endif
+    {
+        return inet_ntoa(*(const struct in_addr *)addr);
+    }
+}
+
 /* Initialize the sockin global.  This is the socket that we accept
  * connections from.
  */
 static void init_sockin(void) {
     struct sockaddr_in addrin;
+#ifdef HAVE_INET6
+    struct sockaddr_in6 addrin6;
+#endif
     socklen_t addrin_len;
     int sockopt;
 
-    /* create incoming socket */
-    sockin = socket(PF_INET, SOCK_STREAM, 0);
+#ifdef HAVE_INET6
+    if (inet6) {
+        memset(&addrin6, 0, sizeof(addrin6));
+        if (inet_pton(AF_INET6, bindaddr ? bindaddr : "::",
+                      &addrin6.sin6_addr) == -1) {
+            errx(1, "malformed --addr argument");
+        }
+        sockin = socket(PF_INET6, SOCK_STREAM, 0);
+    } else
+#endif
+    {
+        memset(&addrin, 0, sizeof(addrin));
+        addrin.sin_addr.s_addr = bindaddr ? inet_addr(bindaddr) : INADDR_ANY;
+        if (addrin.sin_addr.s_addr == (in_addr_t)INADDR_NONE)
+            errx(1, "malformed --addr argument");
+        sockin = socket(PF_INET, SOCK_STREAM, 0);
+    }
+
     if (sockin == -1)
         err(1, "socket()");
 
@@ -838,20 +880,33 @@ static void init_sockin(void) {
 #endif
 
     /* bind socket */
-    addrin.sin_family = (u_char)PF_INET;
-    addrin.sin_port = htons(bindport);
-    addrin.sin_addr.s_addr = bindaddr;
-    memset(&(addrin.sin_zero), 0, 8);
-    if (bind(sockin, (struct sockaddr *)&addrin,
-             sizeof(struct sockaddr)) == -1)
-        err(1, "bind(port %u)", bindport);
+#ifdef HAVE_INET6
+    if (inet6) {
+        addrin6.sin6_family = AF_INET6;
+        addrin6.sin6_port = htons(bindport);
+        if (bind(sockin, (struct sockaddr *)&addrin6,
+                 sizeof(struct sockaddr_in6)) == -1)
+            err(1, "bind(port %u)", bindport);
 
-    addrin_len = sizeof(addrin);
-    if (getsockname(sockin, (struct sockaddr *)&addrin, &addrin_len) == -1)
-        err(1, "getsockname()");
-
-    printf("listening on: http://%s:%u/\n",
-        inet_ntoa(addrin.sin_addr), ntohs(addrin.sin_port));
+        addrin_len = sizeof(addrin6);
+        if (getsockname(sockin, (struct sockaddr *)&addrin6, &addrin_len) == -1)
+            err(1, "getsockname()");
+        printf("listening on: http://[%s]:%u/\n",
+            get_address_text(&addrin6.sin6_addr), bindport);
+    } else
+#endif
+    {
+        addrin.sin_family = (u_char)PF_INET;
+        addrin.sin_port = htons(bindport);
+        if (bind(sockin, (struct sockaddr *)&addrin,
+                 sizeof(struct sockaddr_in)) == -1)
+            err(1, "bind(port %u)", bindport);
+        addrin_len = sizeof(addrin);
+        if (getsockname(sockin, (struct sockaddr *)&addrin, &addrin_len) == -1)
+            err(1, "getsockname()");
+        printf("listening on: http://%s:%u/\n",
+            get_address_text(&addrin.sin_addr), bindport);
+    }
 
     /* listen on socket */
     if (listen(sockin, max_connections) == -1)
@@ -892,8 +947,13 @@ static void usage(const char *argv0) {
     printf("\t--index filename (default: %s)\n"
     "\t\tDefault file to serve when a directory is requested.\n\n",
         index_name);
+    printf("\t--no-listing\n"
+    "\t\tDo not serve listing if directory is requested.\n\n");
     printf("\t--mimetypes filename (optional)\n"
     "\t\tParses specified file for extension-MIME associations.\n\n");
+    printf("\t--default-mimetype string (optional, default: %s)\n"
+    "\t\tFiles with unknown extensions are served as this mimetype.\n\n",
+        octet_stream);
     printf("\t--uid uid/uname, --gid gid/gname (default: don't privdrop)\n"
     "\t\tDrops privileges to given uid:gid after initialization.\n\n");
     printf("\t--pidfile filename (default: no pidfile)\n"
@@ -911,23 +971,48 @@ static void usage(const char *argv0) {
     "\t\tRequests to the host are redirected to the corresponding url.\n"
     "\t\tThe option may be specified multiple times, in which case\n"
     "\t\tthe host is matched in order of appearance.\n\n");
+    printf("\t--forward-all url (default: don't forward)\n"
+    "\t\tWeb forward (301 redirect).\n"
+    "\t\tAll requests are redirected to the corresponding url.\n\n");
     printf("\t--no-server-id\n"
     "\t\tDon't identify the server type in headers\n"
-    "\t\tor directory listings.\n");
+    "\t\tor directory listings.\n\n");
+#ifdef HAVE_INET6
+    printf("\t--ipv6\n"
+    "\t\tListen on IPv6 address.\n\n");
+#else
+    printf("\t(This binary was built without IPv6 support: -DNO_IPV6)\n\n");
+#endif
 }
 
 /* Returns 1 if string is a number, 0 otherwise.  Set num to NULL if
  * disinterested in value.
  */
-static int str_to_num(const char *str, int *num) {
+static int str_to_num(const char *str, long long *num) {
     char *endptr;
+    long long n;
 
-    long l = strtol(str, &endptr, 10);
+    errno = 0;
+    n = strtoll(str, &endptr, 10);
     if (*endptr != '\0')
         return 0;
+    if (n == LLONG_MIN && errno == ERANGE)
+        return 0;
+    if (n == LLONG_MAX && errno == ERANGE)
+        return 0;
     if (num != NULL)
-        *num = (int)l;
+        *num = n;
     return 1;
+}
+
+/* Returns a valid number or dies. */
+static long long xstr_to_num(const char *str) {
+    long long ret;
+
+    if (!str_to_num(str, &ret)) {
+        errx(1, "number \"%s\" is invalid", str);
+    }
+    return ret;
 }
 
 static void parse_commandline(const int argc, char *argv[]) {
@@ -954,19 +1039,17 @@ static void parse_commandline(const int argc, char *argv[]) {
         if (strcmp(argv[i], "--port") == 0) {
             if (++i >= argc)
                 errx(1, "missing number after --port");
-            bindport = (uint16_t)atoi(argv[i]);
+            bindport = (uint16_t)xstr_to_num(argv[i]);
         }
         else if (strcmp(argv[i], "--addr") == 0) {
             if (++i >= argc)
                 errx(1, "missing ip after --addr");
-            bindaddr = inet_addr(argv[i]);
-            if (bindaddr == (in_addr_t)INADDR_NONE)
-                errx(1, "malformed --addr argument");
+            bindaddr = argv[i];
         }
         else if (strcmp(argv[i], "--maxconn") == 0) {
             if (++i >= argc)
                 errx(1, "missing number after --maxconn");
-            max_connections = atoi(argv[i]);
+            max_connections = (int)xstr_to_num(argv[i]);
         }
         else if (strcmp(argv[i], "--log") == 0) {
             if (++i >= argc)
@@ -984,34 +1067,42 @@ static void parse_commandline(const int argc, char *argv[]) {
                 errx(1, "missing filename after --index");
             index_name = argv[i];
         }
+        else if (strcmp(argv[i], "--no-listing") == 0) {
+            no_listing = 1;
+        }
         else if (strcmp(argv[i], "--mimetypes") == 0) {
             if (++i >= argc)
                 errx(1, "missing filename after --mimetypes");
             parse_extension_map_file(argv[i]);
         }
+        else if (strcmp(argv[i], "--default-mimetype") == 0) {
+            if (++i >= argc)
+                errx(1, "missing string after --default-mimetype");
+            default_mimetype = argv[i];
+        }
         else if (strcmp(argv[i], "--uid") == 0) {
             struct passwd *p;
-            int num;
             if (++i >= argc)
                 errx(1, "missing uid after --uid");
             p = getpwnam(argv[i]);
-            if ((p == NULL) && (str_to_num(argv[i], &num)))
-                p = getpwuid( (uid_t)num );
-
-            if (p == NULL)
+            if (!p) {
+                p = getpwuid((uid_t)xstr_to_num(argv[i]));
+            }
+            if (!p)
                 errx(1, "no such uid: `%s'", argv[i]);
             drop_uid = p->pw_uid;
         }
         else if (strcmp(argv[i], "--gid") == 0) {
             struct group *g;
-            int num;
             if (++i >= argc)
                 errx(1, "missing gid after --gid");
             g = getgrnam(argv[i]);
-            if ((g == NULL) && (str_to_num(argv[i], &num)))
-                g = getgrgid((gid_t)num);
-            if (g == NULL)
+            if (!g) {
+                g = getgrgid((gid_t)xstr_to_num(argv[i]));
+            }
+            if (!g) {
                 errx(1, "no such gid: `%s'", argv[i]);
+            }
             drop_gid = g->gr_gid;
         }
         else if (strcmp(argv[i], "--pidfile") == 0) {
@@ -1043,6 +1134,11 @@ static void parse_commandline(const int argc, char *argv[]) {
         else if (strcmp(argv[i], "--no-server-id") == 0) {
             want_server_id = 0;
         }
+#ifdef HAVE_INET6
+        else if (strcmp(argv[i], "--ipv6") == 0) {
+            inet6 = 1;
+        }
+#endif
         else
             errx(1, "unknown argument `%s'", argv[i]);
     }
@@ -1053,7 +1149,7 @@ static struct connection *new_connection(void) {
     struct connection *conn = xmalloc(sizeof(struct connection));
 
     conn->socket = -1;
-    conn->client = INADDR_ANY;
+    memset(&conn->client, 0, sizeof(conn->client));
     conn->last_active = now;
     conn->request = NULL;
     conn->request_length = 0;
@@ -1091,22 +1187,43 @@ static struct connection *new_connection(void) {
 /* Accept a connection from sockin and add it to the connection queue. */
 static void accept_connection(void) {
     struct sockaddr_in addrin;
+#ifdef HAVE_INET6
+    struct sockaddr_in6 addrin6;
+#endif
     socklen_t sin_size;
     struct connection *conn;
 
     /* allocate and initialise struct connection */
     conn = new_connection();
 
-    sin_size = sizeof(addrin);
-    memset(&addrin, 0, sin_size);
-    conn->socket = accept(sockin, (struct sockaddr *)&addrin, &sin_size);
+#ifdef HAVE_INET6
+    if (inet6) {
+        sin_size = sizeof(addrin6);
+        memset(&addrin6, 0, sin_size);
+        conn->socket = accept(sockin, (struct sockaddr *)&addrin6, &sin_size);
+    } else
+#endif
+    {
+        sin_size = sizeof(addrin);
+        memset(&addrin, 0, sin_size);
+        conn->socket = accept(sockin, (struct sockaddr *)&addrin, &sin_size);
+    }
+
     if (conn->socket == -1)
         err(1, "accept()");
 
     nonblock_socket(conn->socket);
 
     conn->state = RECV_REQUEST;
-    conn->client = addrin.sin_addr.s_addr;
+
+#ifdef HAVE_INET6
+    if (inet6) {
+        conn->client = addrin6.sin6_addr;
+    } else
+#endif
+    {
+        *(in_addr_t *)&conn->client = addrin.sin_addr.s_addr;
+    }
     LIST_INSERT_HEAD(&connlist, conn, entries);
 
     if (debug)
@@ -1145,7 +1262,6 @@ static void logencode(const char *src, char *dest) {
 
 /* Add a connection's details to the logfile. */
 static void log_connection(const struct connection *conn) {
-    struct in_addr inaddr;
     char *safe_method, *safe_url, *safe_referer, *safe_user_agent;
 
     if (logfile == NULL)
@@ -1154,8 +1270,6 @@ static void log_connection(const struct connection *conn) {
         return; /* invalid - died in request */
     if (conn->method == NULL)
         return; /* invalid - didn't parse - maybe too long */
-
-    inaddr.s_addr = conn->client;
 
 #define make_safe(x) \
     if (conn->x) { \
@@ -1174,7 +1288,7 @@ static void log_connection(const struct connection *conn) {
 
     fprintf(logfile, "%lu %s \"%s %s\" %d %llu \"%s\" \"%s\"\n",
         (unsigned long int)now,
-        inet_ntoa(inaddr),
+        get_address_text(&conn->client),
         use_safe(method),
         use_safe(url),
         conn->http_code,
@@ -1365,7 +1479,7 @@ static void default_reply(struct connection *conn,
      "Accept-Ranges: bytes\r\n"
      "%s" /* keep-alive */
      "Content-Length: %llu\r\n"
-     "Content-Type: text/html\r\n"
+     "Content-Type: text/html; charset=UTF-8\r\n"
      "\r\n",
      errcode, errname, date, server_hdr, keep_alive(conn),
      llu(conn->reply_length));
@@ -1404,7 +1518,7 @@ static void redirect(struct connection *conn, const char *format, ...) {
      "Location: %s\r\n"
      "%s" /* keep-alive */
      "Content-Length: %llu\r\n"
-     "Content-Type: text/html\r\n"
+     "Content-Type: text/html; charset=UTF-8\r\n"
      "\r\n",
      date, server_hdr, where, keep_alive(conn), llu(conn->reply_length));
 
@@ -1433,9 +1547,9 @@ static char *parse_field(const struct connection *conn, const char *field) {
 
     /* find end */
     for (bound2 = bound1;
-         ((conn->request[bound2] != '\r') &&
-          (conn->request[bound2] != '\n') &&
-          (bound2 < conn->request_length));
+         ((bound2 < conn->request_length) &&
+          (conn->request[bound2] != '\r') &&
+          (conn->request[bound2] != '\n'));
          bound2++)
             ;
 
@@ -1647,25 +1761,24 @@ static void cleanup_sorted_dirlist(struct dlent **list, const ssize_t size) {
     }
 }
 
-/* Should this character be urlencoded? (according to RFC1738)
- * Contributed by nf.
+/* Is this an unreserved character according to
+ * https://tools.ietf.org/html/rfc3986#section-2.3
  */
-static int needs_urlencoding(const unsigned char c) {
-    unsigned int i;
-    static const char bad[] = "<>\"%{}|^~[]`\\;:/?@#=&";
-
-    /* Non-US-ASCII characters */
-    if ((c <= 0x1F) || (c >= 0x7F))
-        return 1;
-
-    for (i = 0; i < sizeof(bad) - 1; i++)
-        if (c == bad[i])
+static int is_unreserved(const unsigned char c) {
+    if (c >= 'a' && c <= 'z') return 1;
+    if (c >= 'A' && c <= 'Z') return 1;
+    if (c >= '0' && c <= '9') return 1;
+    switch (c) {
+        case '-':
+        case '.':
+        case '_':
+        case '~':
             return 1;
-
+    }
     return 0;
 }
 
-/* Encode string to be an RFC1738-compliant URL part.
+/* Encode string to be an RFC3986-compliant URL part.
  * Contributed by nf.
  */
 static void urlencode(const char *src, char *dest) {
@@ -1673,7 +1786,7 @@ static void urlencode(const char *src, char *dest) {
     int i, j;
 
     for (i = j = 0; src[i] != '\0'; i++) {
-        if (needs_urlencoding((unsigned char)src[i])) {
+        if (!is_unreserved((unsigned char)src[i])) {
             dest[j++] = '%';
             dest[j++] = hex[(src[i] >> 4) & 0xF];
             dest[j++] = hex[ src[i]       & 0xF];
@@ -1760,7 +1873,7 @@ static void generate_dir_listing(struct connection *conn, const char *path) {
      "Accept-Ranges: bytes\r\n"
      "%s" /* keep-alive */
      "Content-Length: %llu\r\n"
-     "Content-Type: text/html\r\n"
+     "Content-Type: text/html; charset=UTF-8\r\n"
      "\r\n",
      date, server_hdr, keep_alive(conn), llu(conn->reply_length));
 
@@ -1817,6 +1930,16 @@ static void process_get(struct connection *conn) {
         xasprintf(&target, "%s%s%s", wwwroot, decoded_url, index_name);
         if (!file_exists(target)) {
             free(target);
+            if (no_listing) {
+                free(decoded_url);
+                /* Return 404 instead of 403 to make --no-listing
+                 * indistinguishable from the directory not existing.
+                 * i.e.: Don't leak information.
+                 */
+                default_reply(conn, 404, "Not Found",
+                    "The URL you requested (%s) was not found.", conn->url);
+                return;
+            }
             xasprintf(&target, "%s%s", wwwroot, decoded_url);
             generate_dir_listing(conn, target);
             free(target);
@@ -2211,7 +2334,7 @@ static void poll_send_reply(struct connection *conn)
     }
     conn->last_active = now;
     if (debug)
-        printf("poll_send_reply(%d) sent %d: %lld+[%lld-%lld] of %lld\n",
+        printf("poll_send_reply(%d) sent %d: %llu+[%llu-%llu] of %llu\n",
                conn->socket, (int)sent, llu(conn->reply_start),
                llu(conn->reply_sent), llu(conn->reply_sent + sent - 1),
                llu(conn->reply_length));
@@ -2425,8 +2548,9 @@ static void pidfile_remove(void) {
 }
 
 static int pidfile_read(void) {
-    char buf[16], *endptr;
-    int fd, i, pid;
+    char buf[16];
+    int fd, i;
+    long long pid;
 
     fd = open(pidfile_name, O_RDONLY);
     if (fd == -1)
@@ -2438,10 +2562,10 @@ static int pidfile_read(void) {
     xclose(fd);
     buf[i] = '\0';
 
-    pid = (int)strtoul(buf, &endptr, 10);
-    if (endptr != &buf[i])
+    if (!str_to_num(buf, &pid)) {
         err(1, "invalid pidfile contents: \"%s\"", buf);
-    return (pid);
+    }
+    return (int)pid;
 }
 
 static void pidfile_create(void) {
@@ -2466,7 +2590,7 @@ static void pidfile_create(void) {
         err(1, "ftruncate() failed");
     }
 
-    snprintf(pidstr, sizeof(pidstr), "%u", getpid());
+    snprintf(pidstr, sizeof(pidstr), "%d", (int)getpid());
     if (pwrite(fd, pidstr, strlen(pidstr), 0) != (ssize_t)strlen(pidstr)) {
         error = errno;
         pidfile_remove();
@@ -2528,6 +2652,10 @@ int main(int argc, char **argv) {
         wwwroot[0] = '\0'; /* empty string */
     }
     if (drop_gid != INVALID_GID) {
+        gid_t list[1];
+        list[0] = drop_gid;
+        if (setgroups(1, list) == -1)
+            err(1, "setgroups([%d])", (int)drop_gid);
         if (setgid(drop_gid) == -1)
             err(1, "setgid(%d)", (int)drop_gid);
         printf("set gid to %d\n", (int)drop_gid);
