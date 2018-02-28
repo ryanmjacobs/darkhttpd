@@ -88,12 +88,12 @@ Web forward (301) requests for all hosts:
     --forward-all http://catchall.example.com
 ```
 
-Commandline options can be combined:
+Command-line options can be combined:
 ```
   $ ./darkhttpd ~/public_html --port 8080 --addr 127.0.0.1
 ```
 
-To see a full list of commandline options,
+To see a full list of command-line options,
 run darkhttpd without any arguments:
 ```
   $ ./darkhttpd
