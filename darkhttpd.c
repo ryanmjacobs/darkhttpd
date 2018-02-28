@@ -17,9 +17,6 @@
  * PERFORMANCE OF THIS SOFTWARE.
  */
 
-#define USE_AUTH 1
-#define AUTH_KEY "Basic dXNlcm5hbWU6cGFzc3dvcmQ="
-
 static const char
     pkgname[]   = "darkhttpd/1.12.from.git",
     copyright[] = "copyright (c) 2003-2016 Emil Mikulic";
@@ -298,6 +295,7 @@ static char *pidfile_name = NULL;   /* NULL = no pidfile */
 static int want_chroot = 0, want_daemon = 0, want_accf = 0,
            want_keepalive = 1, want_server_id = 1;
 static char *server_hdr = NULL;
+static char *auth_key = NULL;
 static uint64_t num_requests = 0, total_in = 0, total_out = 0;
 
 static volatile int running = 1; /* signal handler sets this to false */
@@ -980,12 +978,53 @@ static void usage(const char *argv0) {
     printf("\t--no-server-id\n"
     "\t\tDon't identify the server type in headers\n"
     "\t\tor directory listings.\n\n");
+    printf("\t--auth username:password\n"
+    "\t\tEnable basic authentication.\n\n");
 #ifdef HAVE_INET6
     printf("\t--ipv6\n"
     "\t\tListen on IPv6 address.\n\n");
 #else
     printf("\t(This binary was built without IPv6 support: -DNO_IPV6)\n\n");
 #endif
+}
+
+static char *base64_encode(char *str) {
+    const char base64_table[] = {
+        'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H',
+        'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P',
+        'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X',
+        'Y', 'Z', 'a', 'b', 'c', 'd', 'e', 'f',
+        'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n',
+        'o', 'p', 'q', 'r', 's', 't', 'u', 'v',
+        'w', 'x', 'y', 'z', '0', '1', '2', '3',
+        '4', '5', '6', '7', '8', '9', '+', '/'};
+
+    int input_length = strlen(str);
+    int output_length = 4 * ((input_length + 2) / 3);
+
+    char *encoded_data = malloc(output_length+1);
+    if (encoded_data == NULL) return NULL;
+
+    for (int i = 0, j = 0; i < input_length;) {
+
+        uint32_t octet_a = i < input_length ? (unsigned char)str[i++] : 0;
+        uint32_t octet_b = i < input_length ? (unsigned char)str[i++] : 0;
+        uint32_t octet_c = i < input_length ? (unsigned char)str[i++] : 0;
+
+        uint32_t triple = (octet_a << 0x10) + (octet_b << 0x08) + octet_c;
+
+        encoded_data[j++] = base64_table[(triple >> 3 * 6) & 0x3F];
+        encoded_data[j++] = base64_table[(triple >> 2 * 6) & 0x3F];
+        encoded_data[j++] = base64_table[(triple >> 1 * 6) & 0x3F];
+        encoded_data[j++] = base64_table[(triple >> 0 * 6) & 0x3F];
+    }
+
+    const int mod_table[] = {0, 2, 1};
+    for (int i = 0; i < mod_table[input_length % 3]; i++)
+        encoded_data[output_length - 1 - i] = '=';
+    encoded_data[output_length] = '\0';
+
+    return encoded_data;
 }
 
 /* Returns 1 if string is a number, 0 otherwise.  Set num to NULL if
@@ -1136,6 +1175,13 @@ static void parse_commandline(const int argc, char *argv[]) {
         }
         else if (strcmp(argv[i], "--no-server-id") == 0) {
             want_server_id = 0;
+        }
+        else if (strcmp(argv[i], "--auth") == 0) {
+            if (++i >= argc)
+                errx(1, "missing username:password after --auth");
+            char *key = base64_encode(argv[i]);
+            xasprintf(&auth_key, "Basic %s", key);
+            free(key);
         }
 #ifdef HAVE_INET6
         else if (strcmp(argv[i], "--ipv6") == 0) {
@@ -2118,11 +2164,20 @@ static void process_get(struct connection *conn) {
 /* Process a request: build the header and reply, advance state. */
 static void process_request(struct connection *conn) {
     num_requests++;
+
     if (!parse_request(conn)) {
         default_reply(conn, 400, "Bad Request",
             "You sent a request that the server couldn't understand.");
     }
-    else if (USE_AUTH && (conn->authorization == NULL || strcmp(conn->authorization, AUTH_KEY))) {
+    // fail if: (auth_enabled) AND (client supplied invalid credentials)
+    if (auth_key != NULL &&
+            (conn->authorization == NULL ||
+             strcmp(conn->authorization, auth_key)))
+    {
+        // TODO: remove these debug comments
+      //if (auth_key != NULL) puts(auth_key);
+      //if (conn->authorization != NULL) puts(conn->authorization);
+
         default_reply(conn, 401, "Unauthorized",
             "Access is denied due to invalid credentials.");
     }
@@ -2714,6 +2769,7 @@ int main(int argc, char **argv) {
         free(keep_alive_field);
         free(wwwroot);
         free(server_hdr);
+        free(auth_key);
     }
 
     /* usage stats */
