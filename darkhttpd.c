@@ -1177,8 +1177,9 @@ static void parse_commandline(const int argc, char *argv[]) {
             want_server_id = 0;
         }
         else if (strcmp(argv[i], "--auth") == 0) {
-            if (++i >= argc)
+            if (++i >= argc || strchr(argv[i], ':') == NULL)
                 errx(1, "missing username:password after --auth");
+
             char *key = base64_encode(argv[i]);
             xasprintf(&auth_key, "Basic %s", key);
             free(key);
