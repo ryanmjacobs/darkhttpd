@@ -318,7 +318,7 @@ static const char *default_extension_map[] = {
     "image/gif"            " gif",
     "image/jpeg"           " jpeg jpe jpg",
     "image/png"            " png",
-    "image/webp"            " webp",
+    "image/webp"           " webp",
     "text/css"             " css",
     "text/html"            " html htm",
     "text/javascript"      " js",
