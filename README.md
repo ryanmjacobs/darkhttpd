@@ -1,6 +1,7 @@
 Ryan's fork of darkhttpd
 ========================
-#####So far, the changes I have made are:
+
+##### So far, the changes I have made are:
 
 1. Markdown-ify this readme file.
 2. Add `make install`, `make uninstall`, and `make debian`.
@@ -8,14 +9,14 @@ Ryan's fork of darkhttpd
 
 ---
 
-##How to build darkhttpd
+## How to build darkhttpd
 
 Simply run:
 ```
   $ make
 ```
 
-##How to run darkhttpd
+## How to run darkhttpd
 
 Serve /var/www/htdocs on the default port (80 if running as root, else 8080):
 ```
