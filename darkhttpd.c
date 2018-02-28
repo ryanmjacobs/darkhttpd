@@ -17,6 +17,9 @@
  * PERFORMANCE OF THIS SOFTWARE.
  */
 
+#define USE_AUTH 1
+#define AUTH_KEY "Basic dXNlcm5hbWU6cGFzc3dvcmQ="
+
 static const char
     pkgname[]   = "darkhttpd/1.12.from.git",
     copyright[] = "copyright (c) 2003-2016 Emil Mikulic";
@@ -228,7 +231,7 @@ struct connection {
     size_t request_length;
 
     /* request fields */
-    char *method, *url, *referer, *user_agent;
+    char *method, *url, *referer, *user_agent, *authorization;
     off_t range_begin, range_end;
     off_t range_begin_given, range_end_given;
 
@@ -1157,6 +1160,7 @@ static struct connection *new_connection(void) {
     conn->url = NULL;
     conn->referer = NULL;
     conn->user_agent = NULL;
+    conn->authorization = NULL;
     conn->range_begin = 0;
     conn->range_end = 0;
     conn->range_begin_given = 0;
@@ -1320,6 +1324,7 @@ static void free_connection(struct connection *conn) {
     if (conn->url != NULL) free(conn->url);
     if (conn->referer != NULL) free(conn->referer);
     if (conn->user_agent != NULL) free(conn->user_agent);
+    if (conn->authorization != NULL) free(conn->authorization);
     if (conn->header != NULL && !conn->header_dont_free) free(conn->header);
     if (conn->reply != NULL && !conn->reply_dont_free) free(conn->reply);
     if (conn->reply_fd != -1) xclose(conn->reply_fd);
@@ -1341,6 +1346,7 @@ static void recycle_connection(struct connection *conn) {
     conn->url = NULL;
     conn->referer = NULL;
     conn->user_agent = NULL;
+    conn->authorization = NULL;
     conn->range_begin = 0;
     conn->range_end = 0;
     conn->range_begin_given = 0;
@@ -1683,6 +1689,7 @@ static int parse_request(struct connection *conn) {
     /* parse important fields */
     conn->referer = parse_field(conn, "Referer: ");
     conn->user_agent = parse_field(conn, "User-Agent: ");
+    conn->authorization = parse_field(conn, "Authorization: ");
     parse_range_field(conn);
     return 1;
 }
@@ -2114,6 +2121,10 @@ static void process_request(struct connection *conn) {
     if (!parse_request(conn)) {
         default_reply(conn, 400, "Bad Request",
             "You sent a request that the server couldn't understand.");
+    }
+    else if (USE_AUTH && strcmp(conn->authorization, AUTH_KEY)) {
+        default_reply(conn, 401, "Unauthorized",
+            "Access is denied due to invalid credentials.");
     }
     else if (strcmp(conn->method, "GET") == 0) {
         process_get(conn);
