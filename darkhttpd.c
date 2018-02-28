@@ -2122,7 +2122,7 @@ static void process_request(struct connection *conn) {
         default_reply(conn, 400, "Bad Request",
             "You sent a request that the server couldn't understand.");
     }
-    else if (USE_AUTH && strcmp(conn->authorization, AUTH_KEY)) {
+    else if (USE_AUTH && (conn->authorization == NULL || strcmp(conn->authorization, AUTH_KEY))) {
         default_reply(conn, 401, "Unauthorized",
             "Access is denied due to invalid credentials.");
     }
