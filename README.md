@@ -60,6 +60,16 @@ Add mimetypes - in this case, serve .dat files as text/plain:
   $ ./darkhttpd /var/www/htdocs --mimetypes extramime
 ```
 
+Ignore indexing file with specified extension
+```
+  $ ./darkhttpd /var/www/htdocs --ignored-extensions .ico
+```
+
+Also you can specified multiple extensions separated by `,`, the maximum extension number is 64
+```
+  $ ./darkhttpd /var/www/htdocs --ignored-extensions .ico,.txt
+```
+
 Drop privileges:
 ```
   $ ./darkhttpd /var/www/htdocs --uid www --gid www
