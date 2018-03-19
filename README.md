@@ -1,13 +1,4 @@
-Ryan's fork of darkhttpd
-========================
-
-##### So far, the changes I have made are:
-
-1. Markdown-ify this readme file.
-2. Add `make install`, `make uninstall`, and `make debian`.
-3. Remove dev scripts.
-
----
+(forked from https://unix4lyfe.org/git/darkhttpd)
 
 ## How to build darkhttpd
 
