@@ -1217,7 +1217,7 @@ static void parse_commandline(const int argc, char *argv[]) {
         }
         else if (strcmp(argv[i], "--auth") == 0) {
             if (++i >= argc || strchr(argv[i], ':') == NULL)
-                errx(1, "missing username:password after --auth");
+                errx(1, "missing 'user:pass' after --auth");
 
             char *key = base64_encode(argv[i]);
             xasprintf(&auth_key, "Basic %s", key);
@@ -1564,6 +1564,9 @@ static void default_reply(struct connection *conn,
      errcode, errname, errname, reason, generated_on(date));
     free(reason);
 
+    const char *auth_header =
+        "WWW-Authenticate: Basic realm=\"User Visible Realm\"";
+
     conn->header_length = xasprintf(&(conn->header),
      "HTTP/1.1 %d %s\r\n"
      "Date: %s\r\n"
@@ -1572,9 +1575,11 @@ static void default_reply(struct connection *conn,
      "%s" /* keep-alive */
      "Content-Length: %llu\r\n"
      "Content-Type: text/html; charset=UTF-8\r\n"
+     "%s\r\n"
      "\r\n",
      errcode, errname, date, server_hdr, keep_alive(conn),
-     llu(conn->reply_length));
+     llu(conn->reply_length),
+     (auth_key != NULL ? auth_header : ""));
 
     conn->reply_type = REPLY_GENERATED;
     conn->http_code = errcode;
@@ -2238,10 +2243,6 @@ static void process_request(struct connection *conn) {
             (conn->authorization == NULL ||
              strcmp(conn->authorization, auth_key)))
     {
-        // TODO: remove these debug comments
-      //if (auth_key != NULL) puts(auth_key);
-      //if (conn->authorization != NULL) puts(conn->authorization);
-
         default_reply(conn, 401, "Unauthorized",
             "Access is denied due to invalid credentials.");
     }
