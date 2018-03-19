@@ -5,6 +5,7 @@
 Simply run:
 ```
   $ make
+  $ make debian # will produce a .deb package
 ```
 
 ## How to run darkhttpd
