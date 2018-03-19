@@ -306,6 +306,10 @@ static volatile int running = 1; /* signal handler sets this to false */
 static uid_t drop_uid = INVALID_UID;
 static gid_t drop_gid = INVALID_GID;
 
+/* file with specified extension name will be ignored,directory is not affected. */
+#define MAX_EXTENSIONS_NUM  64
+static char *ignored_file_exts[MAX_EXTENSIONS_NUM+1] = { "\0" };
+
 /* Default mimetype mappings - make sure this array is NULL terminated. */
 static const char *default_extension_map[] = {
     "application/ogg"      " ogg",
@@ -951,6 +955,9 @@ static void usage(const char *argv0) {
         index_name);
     printf("\t--no-listing\n"
     "\t\tDo not serve listing if directory is requested.\n\n");
+    printf("\t--ignored-extensions (optional)\n"
+    "\t\tfile with specified extension name will not be indexed and showed,\n"
+    "\t\textension name starts with '.' and is separated by ','.\n\n");
     printf("\t--mimetypes filename (optional)\n"
     "\t\tParses specified file for extension-MIME associations.\n\n");
     printf("\t--default-mimetype string (optional, default: %s)\n"
@@ -1112,6 +1119,37 @@ static void parse_commandline(const int argc, char *argv[]) {
         }
         else if (strcmp(argv[i], "--no-listing") == 0) {
             no_listing = 1;
+        }
+        else if (strcmp(argv[i], "--ignored-extensions") == 0) {
+            if (++i >= argc)
+                errx(1, "missing extension name list after --ignored-extensions");
+
+            char * comma_ocr,*start_pos=argv[i];
+            int i=0;
+            for(;i<MAX_EXTENSIONS_NUM;i++) {
+                if(*start_pos!='.')
+                    errx(1, "extension name should start with '.'");
+                comma_ocr=strchr(start_pos, ',');
+                char * ext;
+                if(comma_ocr!=NULL) {
+                    ext= xmalloc(comma_ocr-start_pos+1);
+                    memcpy(ext, start_pos, comma_ocr-start_pos);
+                    ext[comma_ocr-start_pos]='\0';
+                    ignored_file_exts[i]=ext;
+                    start_pos=comma_ocr+1;
+                    continue;
+                }
+                else {
+                    ext = xmalloc(strlen(start_pos)+1);
+                    strcpy(ext,start_pos);
+                    ignored_file_exts[i]=ext;
+                    break;
+                }
+            }
+            if(i==MAX_EXTENSIONS_NUM)
+                errx(1, "too many extension names");
+            else
+                ignored_file_exts[i+1]="\0";
         }
         else if (strcmp(argv[i], "--mimetypes") == 0) {
             if (++i >= argc)
@@ -1750,6 +1788,19 @@ static int file_exists(const char *path) {
         return 1;
 }
 
+static int file_to_be_ignored(const char * path) {
+    const char * ext = strrchr(path, '.');
+    if(ext==NULL)
+        return 0;
+    const char * ignored_ext;
+    for(int i=0; **(ignored_file_exts+i)!='\0'; i++) {
+        ignored_ext = ignored_file_exts[i];
+        if(!strcmp(ext, ignored_ext))
+            return 1;
+    }
+    return 0;
+}
+
 struct dlent {
     char *name;
     int is_dir;
@@ -1793,6 +1844,10 @@ static ssize_t make_sorted_dirlist(const char *path, struct dlent ***output) {
             pool *= 2;
             list = xrealloc(list, sizeof(struct dlent*) * pool);
         }
+        //skip files with specified extensions
+        if(!S_ISDIR(s.st_mode) && file_to_be_ignored(ent->d_name))
+            continue;
+
         list[entries] = xmalloc(sizeof(struct dlent));
         list[entries]->name = xstrdup(ent->d_name);
         list[entries]->is_dir = S_ISDIR(s.st_mode);
@@ -2015,7 +2070,6 @@ static void process_get(struct connection *conn) {
 
     /* open file */
     conn->reply_fd = open(target, O_RDONLY | O_NONBLOCK);
-    free(target);
 
     if (conn->reply_fd == -1) {
         /* open() failed */
@@ -2049,6 +2103,14 @@ static void process_get(struct connection *conn) {
         default_reply(conn, 403, "Forbidden", "Not a regular file.");
         return;
     }
+    //  detect whether it should be ignored
+    else if (file_to_be_ignored(target) && !S_ISDIR(filestat.st_mode)) {
+        default_reply(conn, 404, "Not Found",
+            "The URL you requested (%s) was not found.", conn->url);
+        return;
+    }
+
+    free(target);
 
     conn->reply_type = REPLY_FROMFILE;
     rfc1123_date(lastmod, filestat.st_mtime);
