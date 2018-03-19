@@ -2180,10 +2180,6 @@ static void process_request(struct connection *conn) {
             (conn->authorization == NULL ||
              strcmp(conn->authorization, auth_key)))
     {
-        // TODO: remove these debug comments
-      //if (auth_key != NULL) puts(auth_key);
-      //if (conn->authorization != NULL) puts(conn->authorization);
-
         default_reply(conn, 401, "Unauthorized",
             "Access is denied due to invalid credentials.");
     }
