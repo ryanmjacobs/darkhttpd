@@ -308,7 +308,7 @@ static gid_t drop_gid = INVALID_GID;
 
 /* file with specified extension name will be ignored,directory is not affected. */
 #define MAX_EXTENSIONS_NUM  64
-static char *ignored_file_exts[MAX_EXTENSIONS_NUM+1] = { "\0" };
+static char *ignored_file_exts[MAX_EXTENSIONS_NUM];
 
 /* Default mimetype mappings - make sure this array is NULL terminated. */
 static const char *default_extension_map[] = {
@@ -1798,7 +1798,7 @@ static int file_to_be_ignored(const char * path) {
     if(ext==NULL)
         return 0;
     const char * ignored_ext;
-    for(int i=0; **(ignored_file_exts+i)!='\0'; i++) {
+    for(int i=0; i < MAX_EXTENSIONS_NUM && ignored_file_exts[i] != NULL; i++) {
         ignored_ext = ignored_file_exts[i];
         if(!strcmp(ext, ignored_ext))
             return 1;
@@ -2076,6 +2076,9 @@ static void process_get(struct connection *conn) {
     /* open file */
     conn->reply_fd = open(target, O_RDONLY | O_NONBLOCK);
 
+    int file_ignored_flag = file_to_be_ignored(target);
+    free(target);
+
     if (conn->reply_fd == -1) {
         /* open() failed */
         if (errno == EACCES)
@@ -2109,13 +2112,12 @@ static void process_get(struct connection *conn) {
         return;
     }
     //  detect whether it should be ignored
-    else if (file_to_be_ignored(target) && !S_ISDIR(filestat.st_mode)) {
+    else if (file_ignored_flag && !S_ISDIR(filestat.st_mode)) {
         default_reply(conn, 404, "Not Found",
             "The URL you requested (%s) was not found.", conn->url);
         return;
     }
 
-    free(target);
 
     conn->reply_type = REPLY_FROMFILE;
     rfc1123_date(lastmod, filestat.st_mtime);
@@ -2835,6 +2837,8 @@ int main(int argc, char **argv) {
         free(wwwroot);
         free(server_hdr);
         free(auth_key);
+        for(int i=0; i < MAX_EXTENSIONS_NUM && ignored_file_exts[i] != NULL; i++)
+            free(ignored_file_exts[i]);
     }
 
     /* usage stats */
