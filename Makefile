@@ -6,15 +6,20 @@ EXECUTABLE=darkhttpd
 all: darkhttpd
 
 darkhttpd: darkhttpd.c
+	rm -rf darkhttpd
 	$(CC) $(CFLAGS) $(LIBS) darkhttpd.c -o $(EXECUTABLE)
 
 # builds a .deb package for debian users
 # `make debian && dpkg -i darkhttpd.deb`
+deb: debian
 debian: darkhttpd
+	mv $(EXECUTABLE) $(EXECUTABLE)_
 	mkdir -p ./darkhttpd/usr/bin
-	mv $(EXECUTABLE) ./darkhttpd/usr/bin/darkhttpd
-	cp -r debian ./darkhttpd
+	mkdir -p ./darkhttpd/DEBIAN
+	mv $(EXECUTABLE)_ ./darkhttpd/usr/bin/darkhttpd
+	cp control ./darkhttpd/DEBIAN/
 	dpkg-deb --build ./darkhttpd
+	rm -rf ./darkhttpd
 	chmod +x darkhttpd.deb
 
 # typical linux `make && make install`
