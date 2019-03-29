@@ -13,7 +13,7 @@ darkhttpd: darkhttpd.c
 debian: darkhttpd
 	mkdir -p ./darkhttpd/usr/bin
 	mv $(EXECUTABLE) ./darkhttpd/usr/bin/darkhttpd
-	cp -r DEBIAN ./darkhttpd
+	cp -r debian ./darkhttpd
 	dpkg-deb --build ./darkhttpd
 	chmod +x darkhttpd.deb
 
