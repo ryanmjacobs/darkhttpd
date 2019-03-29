@@ -44,6 +44,7 @@ static const int debug = 1;
 # include <sys/sendfile.h>
 #endif
 
+#include <sys/time.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -260,11 +261,10 @@ static struct mime_mapping *mime_map = NULL;
 static size_t mime_map_size = 0;
 static size_t longest_ext = 0;
 
-/* If a connection is idle for idletime seconds or more, it gets closed and
- * removed from the connlist.  Set to 0 to remove the timeout
- * functionality.
+/* If a connection is idle for timeout_secs or more, it gets closed and
+ * removed from the connlist.
  */
-static int idletime = 60;
+static int timeout_secs = 30;
 static char *keep_alive_field = NULL;
 
 /* Time is cached in the event loop to avoid making an excessive number of
@@ -279,8 +279,8 @@ static time_t now;
 
 /* Defaults can be overridden on the command-line */
 static const char *bindaddr;
-static uint16_t bindport = 8080; /* or 80 if running as root */
-static int max_connections = -1;        /* kern.ipc.somaxconn */
+static uint16_t bindport = 8080;    /* or 80 if running as root */
+static int max_connections = -1;    /* kern.ipc.somaxconn */
 static const char *index_name = "index.html";
 static int no_listing = 0;
 
@@ -297,6 +297,7 @@ static int want_chroot = 0, want_daemon = 0, want_accf = 0,
 static char *server_hdr = NULL;
 static char *auth_key = NULL;
 static uint64_t num_requests = 0, total_in = 0, total_out = 0;
+static int accepting = 1;           /* set to 0 to stop accept()ing */
 
 static volatile int running = 1; /* signal handler sets this to false */
 
@@ -487,118 +488,62 @@ static char *split_string(const char *src,
     return dest;
 }
 
-/* Consolidate slashes in-place by shifting parts of the string over repeated
- * slashes.
- */
-static void consolidate_slashes(char *s) {
-    size_t left = 0, right = 0;
-    int saw_slash = 0;
-
-    assert(s != NULL);
-    while (s[right] != '\0') {
-        if (saw_slash) {
-            if (s[right] == '/')
-                right++;
-            else {
-                saw_slash = 0;
-                s[left++] = s[right++];
-            }
-        } else {
-            if (s[right] == '/')
-                saw_slash++;
-            s[left++] = s[right++];
-        }
-    }
-    s[left] = '\0';
-}
-
 /* Resolve /./ and /../ in a URL, in-place.  Also strip out query params.
  * Returns NULL if the URL is invalid/unsafe, or the original buffer if
  * successful.
  */
-static char *make_safe_url(char *url) {
-    struct {
-        char *start;
-        size_t len;
-    } *chunks;
-    unsigned int num_slashes, num_chunks;
-    size_t urllen, i, j, pos;
-    int ends_in_slash;
+static char *make_safe_url(char *const url) {
+    char *src = url, *dst;
+    #define ends(c) ((c) == '/' || (c) == '\0')
 
-    /* strip query params */
-    for (pos=0; url[pos] != '\0'; pos++) {
-        if (url[pos] == '?') {
-            url[pos] = '\0';
-            break;
-        }
-    }
-
-    if (url[0] != '/')
+    /* URLs not starting with a slash are illegal. */
+    if (*src != '/')
         return NULL;
 
-    consolidate_slashes(url);
-    urllen = strlen(url);
-    if (urllen > 0)
-        ends_in_slash = (url[urllen-1] == '/');
-    else
-        ends_in_slash = 1;
-
-    /* count the slashes */
-    for (i=0, num_slashes=0; i < urllen; i++)
-        if (url[i] == '/')
-            num_slashes++;
-
-    /* make an array for the URL elements */
-    assert(num_slashes > 0);
-    chunks = xmalloc(sizeof(*chunks) * num_slashes);
-
-    /* split by slashes and build chunks array */
-    num_chunks = 0;
-    for (i=1; i<urllen;) {
-        /* look for the next slash */
-        for (j=i; j<urllen && url[j] != '/'; j++)
-            ;
-
-        /* process url[i,j) */
-        if ((j == i+1) && (url[i] == '.'))
-            /* "." */;
-        else if ((j == i+2) && (url[i] == '.') && (url[i+1] == '.')) {
-            /* ".." */
-            if (num_chunks == 0) {
-                /* unsafe string so free chunks */
-                free(chunks);
-                return (NULL);
-            } else
-                num_chunks--;
-        } else {
-            chunks[num_chunks].start = url+i;
-            chunks[num_chunks].len = j-i;
-            num_chunks++;
+    /* Fast case: skip until first double-slash or dot-dir. */
+    for ( ; *src && *src != '?'; ++src) {
+        if (*src == '/') {
+            if (src[1] == '/')
+                break;
+            else if (src[1] == '.') {
+                if (ends(src[2]))
+                    break;
+                else if (src[2] == '.' && ends(src[3]))
+                    break;
+            }
         }
-
-        i = j + 1; /* url[j] is a slash - move along one */
     }
 
-    /* reassemble in-place */
-    pos = 0;
-    for (i=0; i<num_chunks; i++) {
-        assert(pos <= urllen);
-        url[pos++] = '/';
-
-        assert(pos + chunks[i].len <= urllen);
-        assert(url + pos <= chunks[i].start);
-
-        if (url+pos < chunks[i].start)
-            memmove(url+pos, chunks[i].start, chunks[i].len);
-        pos += chunks[i].len;
+    /* Copy to dst, while collapsing multi-slashes and handling dot-dirs. */
+    dst = src;
+    while (*src && *src != '?') {
+        if (*src != '/')
+            *dst++ = *src++;
+        else if (*++src == '/')
+            ;
+        else if (*src != '.')
+            *dst++ = '/';
+        else if (ends(src[1]))
+            /* Ignore single-dot component. */
+            ++src;
+        else if (src[1] == '.' && ends(src[2])) {
+            /* Double-dot component. */
+            src += 2;
+            if (dst == url)
+                return NULL; /* Illegal URL */
+            else
+                /* Backtrack to previous slash. */
+                while (*--dst != '/' && dst > url);
+        }
+        else
+            *dst++ = '/';
     }
-    free(chunks);
 
-    if ((num_chunks == 0) || ends_in_slash)
-        url[pos++] = '/';
-    assert(pos <= urllen);
-    url[pos] = '\0';
+    if (dst == url)
+        ++dst;
+    *dst = '\0';
     return url;
+    #undef ends
 }
 
 static void add_forward_mapping(const char * const host,
@@ -988,6 +933,10 @@ static void usage(const char *argv0) {
     "\t\tor directory listings.\n\n");
     printf("\t--auth username:password\n"
     "\t\tEnable basic authentication.\n\n");
+    printf("\t--timeout secs (default: %d)\n"
+    "\t\tIf a connection is idle for more than this many seconds,\n"
+    "\t\tit will be closed. Set to zero to disable timeouts.\n\n",
+    timeout_secs);
 #ifdef HAVE_INET6
     printf("\t--ipv6\n"
     "\t\tListen on IPv6 address.\n\n");
@@ -1222,6 +1171,10 @@ static void parse_commandline(const int argc, char *argv[]) {
             char *key = base64_encode(argv[i]);
             xasprintf(&auth_key, "Basic %s", key);
             free(key);
+        else if (strcmp(argv[i], "--timeout") == 0) {
+            if (++i >= argc)
+                errx(1, "missing number after --timeout");
+            timeout_secs = (int)xstr_to_num(argv[i]);
         }
 #ifdef HAVE_INET6
         else if (strcmp(argv[i], "--ipv6") == 0) {
@@ -1282,28 +1235,32 @@ static void accept_connection(void) {
 #endif
     socklen_t sin_size;
     struct connection *conn;
-
-    /* allocate and initialise struct connection */
-    conn = new_connection();
+    int fd;
 
 #ifdef HAVE_INET6
     if (inet6) {
         sin_size = sizeof(addrin6);
         memset(&addrin6, 0, sin_size);
-        conn->socket = accept(sockin, (struct sockaddr *)&addrin6, &sin_size);
+        fd = accept(sockin, (struct sockaddr *)&addrin6, &sin_size);
     } else
 #endif
     {
         sin_size = sizeof(addrin);
         memset(&addrin, 0, sin_size);
-        conn->socket = accept(sockin, (struct sockaddr *)&addrin, &sin_size);
+        fd = accept(sockin, (struct sockaddr *)&addrin, &sin_size);
     }
 
-    if (conn->socket == -1)
-        err(1, "accept()");
+    if (fd == -1) {
+        /* Failed to accept, but try to keep serving existing connections. */
+        if (errno == EMFILE || errno == ENFILE) accepting = 0;
+        warn("accept()");
+        return;
+    }
 
+    /* Allocate and initialize struct connection. */
+    conn = new_connection();
+    conn->socket = fd;
     nonblock_socket(conn->socket);
-
     conn->state = RECV_REQUEST;
 
 #ifdef HAVE_INET6
@@ -1317,8 +1274,10 @@ static void accept_connection(void) {
     LIST_INSERT_HEAD(&connlist, conn, entries);
 
     if (debug)
-        printf("accepted connection from %s:%u\n",
-               inet_ntoa(addrin.sin_addr), ntohs(addrin.sin_port));
+        printf("accepted connection from %s:%u (fd %d)\n",
+               inet_ntoa(addrin.sin_addr),
+               ntohs(addrin.sin_port),
+               conn->socket);
 
     /* Try to read straight away rather than going through another iteration
      * of the select() loop.
@@ -1414,6 +1373,8 @@ static void free_connection(struct connection *conn) {
     if (conn->header != NULL && !conn->header_dont_free) free(conn->header);
     if (conn->reply != NULL && !conn->reply_dont_free) free(conn->reply);
     if (conn->reply_fd != -1) xclose(conn->reply_fd);
+    /* If we ran out of sockets, try to resume accepting. */
+    accepting = 1;
 }
 
 /* Recycle a finished connection for HTTP/1.1 Keep-Alive. */
@@ -1463,14 +1424,14 @@ static void strntoupper(char *str, const size_t length) {
         str[i] = (char)toupper(str[i]);
 }
 
-/* If a connection has been idle for more than idletime seconds, it will be
- * marked as DONE and killed off in httpd_poll()
+/* If a connection has been idle for more than timeout_secs, it will be
+ * marked as DONE and killed off in httpd_poll().
  */
 static void poll_check_timeout(struct connection *conn) {
-    if (idletime > 0) { /* optimised away by compiler */
-        if (now - conn->last_active >= idletime) {
+    if (timeout_secs > 0) {
+        if (now - conn->last_active >= timeout_secs) {
             if (debug)
-                printf("poll_check_timeout(%d) caused closure\n",
+                printf("poll_check_timeout(%d) closing connection\n",
                        conn->socket);
             conn->conn_close = 1;
             conn->state = DONE;
@@ -1672,7 +1633,7 @@ static void parse_range_field(struct connection *conn) {
         /* parse number up to hyphen */
         bound1 = 0;
         for (bound2=0;
-            isdigit((int)range[bound2]) && (bound2 < len);
+            (bound2 < len) && isdigit((int)range[bound2]);
             bound2++)
                 ;
 
@@ -1687,7 +1648,7 @@ static void parse_range_field(struct connection *conn) {
         /* parse number after hyphen */
         bound2++;
         for (bound1=bound2;
-            isdigit((int)range[bound2]) && (bound2 < len);
+            (bound2 < len) && isdigit((int)range[bound2]);
             bound2++)
                 ;
 
@@ -2508,9 +2469,9 @@ static void httpd_poll(void) {
     int max_fd, select_ret;
     struct connection *conn, *next;
     int bother_with_timeout = 0;
-    struct timeval timeout;
+    struct timeval timeout, t0, t1;
 
-    timeout.tv_sec = idletime;
+    timeout.tv_sec = timeout_secs;
     timeout.tv_usec = 0;
 
     FD_ZERO(&recv_set);
@@ -2520,10 +2481,9 @@ static void httpd_poll(void) {
     /* set recv/send fd_sets */
 #define MAX_FD_SET(sock, fdset) { FD_SET(sock,fdset); \
                                 max_fd = (max_fd<sock) ? sock : max_fd; }
-    MAX_FD_SET(sockin, &recv_set);
+    if (accepting) MAX_FD_SET(sockin, &recv_set);
 
     LIST_FOREACH_SAFE(conn, &connlist, entries, next) {
-        poll_check_timeout(conn);
         switch (conn->state) {
         case DONE:
             /* do nothing */
@@ -2544,19 +2504,34 @@ static void httpd_poll(void) {
 #undef MAX_FD_SET
 
     /* -select- */
+    if (debug) {
+        printf("select() with max_fd %d timeout %d\n",
+                max_fd, bother_with_timeout ? (int)timeout.tv_sec : 0);
+        gettimeofday(&t0, NULL);
+    }
     select_ret = select(max_fd + 1, &recv_set, &send_set, NULL,
         (bother_with_timeout) ? &timeout : NULL);
     if (select_ret == 0) {
         if (!bother_with_timeout)
             errx(1, "select() timed out");
-        else
-            return;
     }
     if (select_ret == -1) {
         if (errno == EINTR)
             return; /* interrupted by signal */
         else
             err(1, "select() failed");
+    }
+    if (debug) {
+        long long sec, usec;
+        gettimeofday(&t1, NULL);
+        sec = t1.tv_sec - t0.tv_sec;
+        usec = t1.tv_usec - t0.tv_usec;
+        if (usec < 0) {
+            usec += 1000000;
+            sec--;
+        }
+        printf("select() returned %d after %lld.%06lld secs\n",
+                select_ret, sec, usec);
     }
 
     /* update time */
@@ -2567,6 +2542,7 @@ static void httpd_poll(void) {
         accept_connection();
 
     LIST_FOREACH_SAFE(conn, &connlist, entries, next) {
+        poll_check_timeout(conn);
         switch (conn->state) {
         case RECV_REQUEST:
             if (FD_ISSET(conn->socket, &recv_set)) poll_recv_request(conn);
@@ -2585,6 +2561,7 @@ static void httpd_poll(void) {
             break;
         }
 
+        /* Handling SEND_REPLY could have set the state to done. */
         if (conn->state == DONE) {
             /* clean out finished connection */
             if (conn->conn_close) {
@@ -2747,7 +2724,7 @@ int main(int argc, char **argv) {
      * parsing a user-specified file.
      */
     sort_mime_map();
-    xasprintf(&keep_alive_field, "Keep-Alive: timeout=%d\r\n", idletime);
+    xasprintf(&keep_alive_field, "Keep-Alive: timeout=%d\r\n", timeout_secs);
     if (want_server_id)
         xasprintf(&server_hdr, "Server: %s\r\n", pkgname);
     else
@@ -2859,4 +2836,4 @@ int main(int argc, char **argv) {
     return 0;
 }
 
-/* vim:set tabstop=4 shiftwidth=4 expandtab tw=78: */
+/* vim:set ts=4 sw=4 sts=4 expandtab tw=78: */

@@ -1,0 +1,170 @@
+#!/bin/bash
+#
+# Build a coverage-enabled darkhttpd, run unit tests and calculate coverage.
+#
+cd $(dirname $0)
+declare -r DIR=tmp.httpd.tests
+declare -r PORT=12346
+
+if [ ! -e test.py ]; then
+	echo "fatal: can't find test.py. are you in the right directory?" >&2
+	exit 1
+fi
+if [[ -z "$CC" ]]; then
+  CC="$(which gcc)"
+fi
+if [[ -z "$CLANG" ]]; then
+  CLANG="$(which clang)"
+fi
+
+runtests() {
+  if [ -e $DIR ]; then
+    rm -rf $DIR || exit 1
+  fi
+  mkdir $DIR || exit 1
+  mkdir $DIR/forbidden || exit 1
+  chmod 0 $DIR/forbidden || exit 1
+  mkdir $DIR/unreadable || exit 1
+  chmod 0100 $DIR/unreadable || exit 1
+  rm -f darkhttpd.gcda test.out.log test.out.stdout test.out.stderr
+
+  echo "===> run usage statement"
+  # Early exit if we can't even survive usage.
+  ./a.out >/dev/null 2>>test.out.stderr || exit 1
+
+  echo "===> run tests against a basic instance (generates darkhttpd.gcda)"
+  ./a.out $DIR --port $PORT --log test.out.log \
+    >>test.out.stdout 2>>test.out.stderr &
+  PID=$!
+  kill -0 $PID || exit 1
+  python test.py
+  kill $PID
+  wait $PID
+
+  echo "===> run --forward tests"
+  ./a.out $DIR --port $PORT \
+    --forward example.com http://www.example.com \
+    --forward secure.example.com https://www.example.com/secure \
+    >>test.out.stdout 2>>test.out.stderr &
+  PID=$!
+  kill -0 $PID || exit 1
+  python test_forward.py
+  kill $PID
+  wait $PID
+
+  echo "===> run --forward-all tests"
+  ./a.out $DIR --port $PORT \
+    --forward example.com http://www.example.com \
+    --forward-all http://catchall.example.com \
+    >>test.out.stdout 2>>test.out.stderr &
+  PID=$!
+  kill -0 $PID || exit 1
+  python test_forward_all.py
+  kill $PID
+  wait $PID
+
+  echo "===> run --no-server-id tests"
+  ./a.out $DIR --port $PORT --no-server-id \
+    >>test.out.stdout 2>>test.out.stderr &
+  PID=$!
+  kill -0 $PID || exit 1
+  python test_server_id.py
+  kill $PID
+  wait $PID
+
+  echo "===> run mimemap tests"
+  echo "test/type1 a1" > $DIR/mimemap
+  echo "test/this-gets-replaced  ap2" >> $DIR/mimemap
+  echo "# this is a comment" >> $DIR/mimemap
+  printf "test/type3\\tapp3\r\n" >> $DIR/mimemap
+  echo "test/type2  ap2" >> $DIR/mimemap
+  ./a.out $DIR --port $PORT \
+    --mimetypes $DIR/mimemap \
+    --default-mimetype test/default \
+    >>test.out.stdout 2>>test.out.stderr &
+  PID=$!
+  kill -0 $PID || exit 1
+  python test_mimemap.py
+  kill $PID
+  wait $PID
+
+  echo "===> run --no-listing tests"
+  ./a.out $DIR --port $PORT --no-listing \
+    >>test.out.stdout 2>>test.out.stderr &
+  PID=$!
+  kill -0 $PID || exit 1
+  python test_no_listing.py
+  kill $PID
+  wait $PID
+
+  echo "===> run --timeout tests"
+  ./a.out $DIR --port $PORT --timeout 1 \
+    >>test.out.stdout 2>>test.out.stderr &
+  PID=$!
+  kill -0 $PID || exit 1
+  python test_timeout.py
+  kill $PID
+  wait $PID
+
+  if [[ -s test.out.stderr ]]; then
+    echo "FAIL: stderr should have been empty."
+    exit 1
+  fi
+}
+
+# --- main ---
+
+# Unit test.
+echo "===> test_make_safe_uri"
+$CC -g -O2 -fsanitize=address -fsanitize=undefined \
+  test_make_safe_uri.c -o test_make_safe_uri || exit 1
+if ./test_make_safe_uri | egrep '^FAIL:'; then
+  echo test_make_safe_uri failed >&2
+  exit 1
+fi
+
+# Check that the code builds with various defines.
+echo "===> building without -DDEBUG"
+$CC -O2 -Wall ../darkhttpd.c || exit 1
+echo "===> building with -DNO_IPV6"
+$CC -O2 -Wall -DNO_IPV6 ../darkhttpd.c || exit 1
+
+# Do coverage and sanitizers.
+# -fsanitize=undefined produces stderr.
+# -fsanitize=address produces stderr and crashes.
+# -fsanitize=memory produces stderr and crashes.
+
+# msan first.
+if ! $CLANG -v 2>/dev/null; then
+  echo "***WARNING*** Can't find clang."
+  echo "Skipping memory sanitizer. Try setting the \$CLANG env var."
+else
+  echo "===> building a.out for msan"
+  $CLANG -g -O2 -fsanitize=memory -DDEBUG -DAPBUF_INIT=1 \
+    ../darkhttpd.c || exit 1
+  (runtests) || {
+    echo "FAILED! stderr was:"
+    echo "---"
+    cat test.out.stderr
+    echo "---"
+    exit 1
+  }
+fi
+
+# asan and coverage next.
+echo "===> building a.out and darkhttpd.gcno for coverage + asan + ubsan"
+$CC -g -O2 -fprofile-arcs -ftest-coverage -fsanitize=address \
+  -fsanitize=undefined -DDEBUG -DAPBUF_INIT=1 ../darkhttpd.c || exit 1
+(runtests) || {
+  echo "FAILED! stderr was:"
+  echo "---"
+  cat test.out.stderr
+  echo "---"
+  exit 1
+}
+echo "===> generating report"
+gcov darkhttpd
+rm -rf $DIR
+rm -f darkhttpd.gcda darkhttpd.gcno a.out
+echo "===> PASSED!"
+echo "===> read the report: less darkhttpd.c.gcov"
