@@ -1,6 +1,6 @@
 /* darkhttpd - a simple, single-threaded, static content webserver.
  * https://unix4lyfe.org/darkhttpd/
- * Copyright (c) 2003-2018 Emil Mikulic <emikulic@gmail.com>
+ * Copyright (c) 2003-2019 Emil Mikulic <emikulic@gmail.com>
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the
@@ -19,7 +19,9 @@
 
 static const char
     pkgname[]   = "darkhttpd/1.12.from.git",
-    copyright[] = "copyright (c) 2003-2018 Emil Mikulic";
+    copyright[] = "https://github.com/ryanmjacobs/darkhttpd\n"
+                  "copyright (c) 2003-2019 Emil Mikulic\n"
+                  "2014-2019 Ryan Jacobs (Basic-Auth / .deb)\n";
 
 /* Possible build options: -DDEBUG -DNO_IPV6 */
 
@@ -2717,7 +2719,7 @@ static void stop_running(int sig unused) {
 
 /* Execution starts here. */
 int main(int argc, char **argv) {
-    printf("%s, %s.\n", pkgname, copyright);
+    printf("%s, %s\n", pkgname, copyright);
     parse_default_extension_map();
     parse_commandline(argc, argv);
     /* parse_commandline() might override parts of the extension map by
