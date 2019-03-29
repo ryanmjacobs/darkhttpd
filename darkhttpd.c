@@ -1171,7 +1171,7 @@ static void parse_commandline(const int argc, char *argv[]) {
             char *key = base64_encode(argv[i]);
             xasprintf(&auth_key, "Basic %s", key);
             free(key);
-        else if (strcmp(argv[i], "--timeout") == 0) {
+        } else if (strcmp(argv[i], "--timeout") == 0) {
             if (++i >= argc)
                 errx(1, "missing number after --timeout");
             timeout_secs = (int)xstr_to_num(argv[i]);
