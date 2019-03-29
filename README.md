@@ -1,11 +1,25 @@
 (forked from https://unix4lyfe.org/git/darkhttpd)
 
+# darkhttpd
+
+### Now with HTTP Basic-Auth support!
+
+```
+Usage:
+	--auth username:password
+		Enable basic authentication.
+```
+
+```console
+$ darkhttpd . --port 8080 --auth john:pass123
+```
+
 ## How to build darkhttpd
 
 Simply run:
 ```shell
-$ make
-$ make debian # will produce a .deb package
+$ make bin    # produces native binary only
+$ make debian # will produce a .deb package too
 ```
 
 ## How to run darkhttpd
