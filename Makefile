@@ -1,7 +1,7 @@
 CC?=cc
 CFLAGS?=-O
 LIBS=`[ \`uname\` = "SunOS" ] && echo -lsocket -lnsl`
-EXECUTABLE=darkhttpd_
+EXECUTABLE=darkhttpd
 
 all: darkhttpd
 
@@ -24,6 +24,6 @@ uninstall:
 	@rm -vf /usr/bin/$(EXECUTABLE)
 
 clean:
-	rm -rf $(EXECUTABLE) ./darkhttpd/
+	rm -rf $(EXECUTABLE) darkhttpd.deb ./darkhttpd/
 
 .PHONY: all clean debian darkhttpd
