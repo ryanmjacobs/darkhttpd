@@ -6,8 +6,8 @@
 
 ```
 Usage:
-	--auth username:password
-		Enable basic authentication.
+    --auth username:password
+        Enable basic authentication.
 ```
 
 ```console
