@@ -17,9 +17,15 @@ $ darkhttpd . --port 8080 --auth john:pass123
 ## How to build darkhttpd
 
 Simply run:
-```shell
+```console
 $ make bin    # produces native binary only
 $ make debian # will produce a .deb package too
+```
+
+To install:
+```
+$ sudo make install           # distro-independent
+$ sudo dpkg -i darkhttpd.deb  # for Debian-based distros, e.g. Ubuntu
 ```
 
 ## How to run darkhttpd
