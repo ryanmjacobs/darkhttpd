@@ -2,16 +2,15 @@
 
 # darkhttpd
 
+### If you're here for a Ubuntu/Debian package...
+
+You can grab it here: 
+
 ### Now with HTTP Basic-Auth support!
 
 ```
-Usage:
-    --auth username:password
-        Enable basic authentication.
-```
-
-```console
-$ darkhttpd . --port 8080 --auth john:pass123
+Usage: darkhttpd . --auth username:password
+       darkhttpd . --port 8080 --auth john:pass123
 ```
 
 ## How to build darkhttpd
