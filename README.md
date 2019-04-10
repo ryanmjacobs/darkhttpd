@@ -4,7 +4,7 @@
 
 ### If you're here for a Ubuntu/Debian package...
 
-You can grab it here: 
+You can grab it here: https://github.com/ryanmjacobs/darkhttpd/releases/download/r1/darkhttpd-x86_64.deb
 
 ### Now with HTTP Basic-Auth support!
 
