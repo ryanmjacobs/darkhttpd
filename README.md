@@ -4,7 +4,7 @@
 
 ### If you're here for a Ubuntu/Debian package...
 
-You can grab it here: https://github.com/ryanmjacobs/darkhttpd/releases/download/r1/darkhttpd-x86_64.deb
+You can grab it here: https://github.com/ryanmjacobs/darkhttpd/releases/download/r2/darkhttpd-x86_64.deb
 
 ### Now with HTTP Basic-Auth support!
 
@@ -36,6 +36,9 @@ See the full usage by running `darkhttpd --help`.
 This section documents what package/binaries I have compiled and uploaded to
 Github Releases.
 
+* r2 (2019-04-10):
+  * compiled and statically linked to musl for better compatibility
+  * CC=musl-gcc LDFLAGS=-static make deb
 * r1 (2019-04-10):
   * compiled and uploaded 64-bit .deb package
   * git hash d7501ec on master branch

@@ -1,13 +1,13 @@
 CC?=cc
-CFLAGS?=-O
-LIBS=`[ \`uname\` = "SunOS" ] && echo -lsocket -lnsl`
+CFLAGS?=-Wall -O2
+#LDFLAGS?=
 
 all: bin
 
 bin: darkhttpd
 darkhttpd: darkhttpd.c
 	rm -rf darkhttpd
-	$(CC) $(CFLAGS) $(LIBS) darkhttpd.c -o darkhttpd
+	$(CC) $(CFLAGS) $(LDFLAGS) darkhttpd.c -o darkhttpd
 
 # builds a .deb package for debian users
 # `make debian && dpkg -i darkhttpd.deb`
