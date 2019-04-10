@@ -6,6 +6,8 @@
 
 You can grab it here: 
 
+---
+
 ### Now with HTTP Basic-Auth support!
 
 ```
