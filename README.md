@@ -27,95 +27,15 @@ $ sudo make install           # distro-independent
 $ sudo dpkg -i darkhttpd.deb  # for Debian-based distros, e.g. Ubuntu
 ```
 
-## How to run darkhttpd
+## Usage
 
-Serve /var/www/htdocs on the default port (80 if running as root, else 8080):
-```sh
-$ ./darkhttpd /var/www/htdocs
-```
+See the full usage by running `darkhttpd --help`.
 
-Serve ~/public_html on port 8081:
-```
-$ ./darkhttpd ~/public_html --port 8081
-```
+## Release Versions
 
-Only bind to one IP address (useful on multi-homed systems):
-```
-$ ./darkhttpd ~/public_html --addr 192.168.0.1
-```
+This section documents what package/binaries I have compiled and uploaded to
+Github Releases.
 
-Serve at most 4 simultaneous connections:
-```
-$ ./darkhttpd ~/public_html --maxconn 4
-```
-
-Log accesses to a file:
-```
-$ ./darkhttpd ~/public_html --log access.log
-```
-
-Chroot for extra security (you need root privs for chroot):
-```
-$ ./darkhttpd /var/www/htdocs --chroot
-```
-
-Use default.htm instead of index.html:
-```
-$ ./darkhttpd /var/www/htdocs --index default.htm
-```
-
-Add mimetypes - in this case, serve .dat files as text/plain:
-```
-$ cat extramime
-text/plain  dat
-$ ./darkhttpd /var/www/htdocs --mimetypes extramime
-```
-
-Ignore indexing file with specified extension
-```
-$ ./darkhttpd /var/www/htdocs --ignored-extensions .ico
-```
-
-Also you can specified multiple extensions separated by `,`, the maximum extension number is 64
-```
-$ ./darkhttpd /var/www/htdocs --ignored-extensions .ico,.txt
-```
-
-Drop privileges:
-```
-$ ./darkhttpd /var/www/htdocs --uid www --gid www
-```
-
-Use acceptfilter (FreeBSD only):
-```
-$ kldload accf_http
-$ ./darkhttpd /var/www/htdocs --accf
-```
-
-Run in the background and create a pidfile:
-```
-$ ./darkhttpd /var/www/htdocs --pidfile /var/run/httpd.pid --daemon
-```
-
-Web forward (301) requests for some hosts:
-```
-$ ./darkhttpd /var/www/htdocs --forward example.com http://www.example.com \
-  --forward secure.example.com https://www.example.com/secure
-```
-
-Web forward (301) requests for all hosts:
-```
-$ ./darkhttpd /var/www/htdocs --forward example.com http://www.example.com \
-  --forward-all http://catchall.example.com
-```
-
-Command-line options can be combined:
-```
-$ ./darkhttpd ~/public_html --port 8080 --addr 127.0.0.1
-```
-
-To see a full list of command-line options,
-run darkhttpd without any arguments:
-```
-$ ./darkhttpd
-```
+* r1 (2019-04-10):
+  * compiled and uploaded 64-bit .deb package
+  * git hash d7501ec on master branch
