@@ -5,6 +5,10 @@
 ### If you're here for a Ubuntu/Debian package...
 
 You can grab it here: https://github.com/ryanmjacobs/darkhttpd/releases/download/r2/darkhttpd-x86_64.deb
+```console
+$ curl -O https://github.com/ryanmjacobs/darkhttpd/releases/download/r2/darkhttpd-x86_64.deb
+$ dpkg -i darkhttpd-x86_64.deb
+```
 
 ### Now with HTTP Basic-Auth support!
 
