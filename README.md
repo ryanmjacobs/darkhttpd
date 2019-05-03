@@ -10,7 +10,7 @@ $ curl -O https://github.com/ryanmjacobs/darkhttpd/releases/download/r2/darkhttp
 $ dpkg -i darkhttpd-x86_64.deb
 ```
 
-### Now with HTTP Basic-Auth support!
+### Now with HTTP Basic-Auth support
 
 ```
 Usage: darkhttpd . --auth username:password
