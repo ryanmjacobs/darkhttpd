@@ -2209,7 +2209,7 @@ static void process_request(struct connection *conn) {
              strcmp(conn->authorization, auth_key)))
     {
         default_reply(conn, 401, "Unauthorized",
-            "Access is denied due to invalid credentials.");
+            "Access denied due to invalid credentials.");
     }
     else if (strcmp(conn->method, "GET") == 0) {
         process_get(conn);
