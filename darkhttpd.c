@@ -21,7 +21,7 @@ static const char
     pkgname[]   = "darkhttpd/1.12.from.git",
     copyright[] = "https://github.com/ryanmjacobs/darkhttpd\n"
                   "copyright (c) 2003-2019 Emil Mikulic\n"
-                  "2014-2019 Ryan Jacobs (Basic-Auth / .deb)\n";
+                  "2014-2020 Ryan Jacobs (contrib basic-auth / .deb)\n";
 
 /* Possible build options: -DDEBUG -DNO_IPV6 */
 
